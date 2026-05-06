@@ -16,7 +16,7 @@ ML pipeline orchestration using Apache Airflow with Snowflake ML — demonstrati
 - Python 3.11+
 - Snowflake account with Model Registry, Model Monitor support
 - Snowflake CLI connection configured in `~/.snowflake/connections.toml`
-- Model `PRANJ.TEST.DEMAND_FORECAST_MODEL` registered (run DAG 01 first)
+- Model `MY_DATABASE.MY_SCHEMA.DEMAND_FORECAST_MODEL` registered (run DAG 01 first)
 
 ## Setup
 
@@ -43,7 +43,7 @@ airflow standalone
 The DAGs use `snowpark_session.py` which reads from `~/.snowflake/connections.toml`. Set the connection name via environment variable:
 
 ```bash
-export SNOWFLAKE_CONNECTION_NAME=demoacct
+export SNOWFLAKE_CONNECTION_NAME=my_connection
 ```
 
 ## Execution Order

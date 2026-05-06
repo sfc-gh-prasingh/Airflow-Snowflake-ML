@@ -16,8 +16,9 @@ from airflow.decorators import dag, task
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-DATABASE = "PRANJ"
-SCHEMA = "TEST"
+DATABASE = "MY_DATABASE"
+SCHEMA = "MY_SCHEMA"
+WAREHOUSE = "MY_WAREHOUSE"
 MODEL_NAME = "DEMAND_FORECAST_MODEL"
 VERSION = "V1"
 
@@ -110,23 +111,23 @@ def monitoring_setup():
         session = create_snowpark_session()
         session.sql(f"USE DATABASE {DATABASE}").collect()
         session.sql(f"USE SCHEMA {SCHEMA}").collect()
-        session.sql(f"USE WAREHOUSE DEMO_WH").collect()
+        session.sql(f"USE WAREHOUSE {WAREHOUSE}").collect()
 
         session.sql("DROP MODEL MONITOR IF EXISTS DEMAND_MONITOR").collect()
 
-        session.sql("""
+        session.sql(f"""
             CREATE MODEL MONITOR DEMAND_MONITOR WITH
                 MODEL              = DEMAND_FORECAST_MODEL
                 VERSION            = 'V1'
                 FUNCTION           = 'predict'
-                SOURCE             = PRANJ.TEST.DEMAND_PREDICTIONS
-                WAREHOUSE          = DEMO_WH
+                SOURCE             = {DATABASE}.{SCHEMA}.DEMAND_PREDICTIONS
+                WAREHOUSE          = {WAREHOUSE}
                 REFRESH_INTERVAL   = '1 day'
                 AGGREGATION_WINDOW = '1 day'
                 TIMESTAMP_COLUMN   = TS
                 PREDICTION_SCORE_COLUMNS = ('DEMAND_PREDICTION')
                 ACTUAL_SCORE_COLUMNS     = ('DEMAND_ACTUAL')
-                BASELINE           = PRANJ.TEST.DEMAND_BASELINE
+                BASELINE           = {DATABASE}.{SCHEMA}.DEMAND_BASELINE
                 ID_COLUMNS         = ('ROW_ID')
         """).collect()
 
@@ -173,12 +174,12 @@ def monitoring_setup():
             CREATE NOTIFICATION INTEGRATION IF NOT EXISTS DRIFT_EMAIL_NOTIFICATION
                 TYPE = EMAIL
                 ENABLED = TRUE
-                ALLOWED_RECIPIENTS = ('pranjal.singh@snowflake.com')
+                ALLOWED_RECIPIENTS = ('your-email@example.com')
         """).collect()
 
-        session.sql("""
+        session.sql(f"""
             CREATE OR REPLACE ALERT DEMAND_DRIFT_ALERT
-                WAREHOUSE = DEMO_WH
+                WAREHOUSE = {WAREHOUSE}
                 SCHEDULE  = '60 MINUTE'
             IF (EXISTS (
                 SELECT METRIC_VALUE
@@ -196,7 +197,7 @@ def monitoring_setup():
                 BEGIN
                     CALL SYSTEM$SEND_EMAIL(
                         'DRIFT_EMAIL_NOTIFICATION',
-                        'pranjal.singh@snowflake.com',
+                        'your-email@example.com',
                         '[ALERT] Demand Model Drift Detected',
                         'Significant feature drift (PSI > 0.2) detected in avg_temperature.'
                     );

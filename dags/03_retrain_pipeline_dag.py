@@ -16,9 +16,9 @@ from airflow.utils.trigger_rule import TriggerRule
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-DATABASE = "PRANJ"
-SCHEMA = "TEST"
-WAREHOUSE = "DEMO_WH"
+DATABASE = "MY_DATABASE"
+SCHEMA = "MY_SCHEMA"
+WAREHOUSE = "MY_WAREHOUSE"
 
 
 @dag(
@@ -140,8 +140,8 @@ def retrain_pipeline():
         session.sql(f"USE DATABASE {DATABASE}").collect()
         session.sql(f"USE SCHEMA {SCHEMA}").collect()
 
-        session.sql("""
-            CREATE TABLE IF NOT EXISTS PRANJ.TEST.RETRAIN_LOG (
+        session.sql(f"""
+            CREATE TABLE IF NOT EXISTS {DATABASE}.{SCHEMA}.RETRAIN_LOG (
                 RUN_DATE TIMESTAMP_NTZ,
                 MESSAGE VARCHAR
             )
@@ -154,7 +154,7 @@ def retrain_pipeline():
             msg = "Retraining skipped - no significant drift."
 
         session.sql(f"""
-            INSERT INTO PRANJ.TEST.RETRAIN_LOG (RUN_DATE, MESSAGE)
+            INSERT INTO {DATABASE}.{SCHEMA}.RETRAIN_LOG (RUN_DATE, MESSAGE)
             SELECT CURRENT_TIMESTAMP(), '{msg}'
         """).collect()
 

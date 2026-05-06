@@ -15,8 +15,8 @@ from airflow.decorators import dag, task
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-DATABASE = "PRANJ"
-SCHEMA = "TEST"
+DATABASE = "MY_DATABASE"
+SCHEMA = "MY_SCHEMA"
 MODEL_NAME = "DEMAND_FORECAST_MODEL"
 VERSION = "V1"
 
