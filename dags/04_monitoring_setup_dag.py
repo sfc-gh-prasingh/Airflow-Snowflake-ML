@@ -2,8 +2,8 @@
 Airflow DAG: Monitoring Setup (One-Time)
 
 Creates prediction/baseline tables, sets up the Model Monitor,
-simulates drift, and creates an alert. Run once to bootstrap the
-monitoring infrastructure.
+simulates drift, creates an alert, checks drift, and retrains if needed.
+Run once to bootstrap the monitoring infrastructure.
 
 Adapted from Snowflake Task DAG version.
 """
@@ -208,10 +208,110 @@ def monitoring_setup():
         session.close()
         return {"alert": "DEMAND_DRIFT_ALERT", "status": "active"}
 
+    @task()
+    def check_drift(alert_info: dict):
+        from snowpark_session import create_snowpark_session
+
+        session = create_snowpark_session()
+        session.sql(f"USE DATABASE {DATABASE}").collect()
+        session.sql(f"USE SCHEMA {SCHEMA}").collect()
+
+        result = session.sql("""
+            SELECT MAX(METRIC_VALUE) AS MAX_PSI
+            FROM TABLE(MODEL_MONITOR_DRIFT_METRIC(
+                'DEMAND_MONITOR',
+                'POPULATION_STABILITY_INDEX',
+                '"avg_temperature"',
+                '1 DAY',
+                DATEADD('day', -7, CURRENT_TIMESTAMP())::TIMESTAMP_NTZ,
+                CURRENT_TIMESTAMP()::TIMESTAMP_NTZ
+            ))
+        """).collect()
+
+        max_psi = float(result[0]["MAX_PSI"]) if result[0]["MAX_PSI"] is not None else 0.0
+        session.close()
+        return {"max_psi": max_psi, "drift_detected": max_psi > 0.2}
+
+    @task.branch()
+    def decide_retrain(drift_check: dict):
+        if drift_check["drift_detected"]:
+            return "retrain_model"
+        return "skip_retrain"
+
+    @task()
+    def retrain_model():
+        import numpy as np
+        import pandas as pd
+        from sklearn.ensemble import GradientBoostingRegressor
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import mean_absolute_error, root_mean_squared_error
+
+        from snowpark_session import create_snowpark_session
+        from snowflake.ml.registry import Registry
+        from snowflake.ml.model import type_hints as model_types
+
+        session = create_snowpark_session()
+        session.sql(f"USE DATABASE {DATABASE}").collect()
+        session.sql(f"USE SCHEMA {SCHEMA}").collect()
+
+        np.random.seed(99)
+        n = 5000
+        data = pd.DataFrame({
+            "day_of_week":     np.random.randint(0, 7, n).astype(float),
+            "month":           np.random.randint(1, 13, n).astype(float),
+            "avg_temperature": np.random.normal(75, 15, n),
+            "promo_active":    np.random.choice([0.0, 1.0], n),
+            "historical_avg":  np.random.normal(425, 100, n),
+        })
+        data["demand"] = (
+            200
+            + 30 * data["promo_active"]
+            + 0.8 * data["historical_avg"]
+            + 1.2 * data["avg_temperature"]
+            - 5 * data["day_of_week"]
+            + np.random.normal(0, 20, n)
+        )
+
+        X = data.drop(columns=["demand"])
+        y = data["demand"]
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+        model = GradientBoostingRegressor(n_estimators=200, max_depth=4, random_state=42)
+        model.fit(X_train, y_train)
+
+        y_pred = model.predict(X_test)
+        mae = mean_absolute_error(y_test, y_pred)
+        rmse = root_mean_squared_error(y_test, y_pred)
+
+        reg = Registry(session=session, database_name=DATABASE, schema_name=SCHEMA)
+        sample_input = session.create_dataframe(X_test.head(10).reset_index(drop=True))
+
+        reg.log_model(
+            model=model,
+            model_name=MODEL_NAME,
+            version_name="V2",
+            sample_input_data=sample_input,
+            task=model_types.Task.TABULAR_REGRESSION,
+            target_platforms=["WAREHOUSE"],
+            metrics={"MAE": mae, "RMSE": rmse},
+            comment="Retrained model on updated distribution (drift-triggered)",
+        )
+
+        session.close()
+        return {"version": "V2", "mae": round(mae, 2), "rmse": round(rmse, 2)}
+
+    @task()
+    def skip_retrain():
+        return {"action": "skipped", "reason": "No significant drift detected"}
+
     tables = create_prediction_tables()
     monitor = create_monitor(tables)
     drift = simulate_drift(monitor)
-    create_alert(drift)
+    alert = create_alert(drift)
+    drift_check = check_drift(alert)
+    branch = decide_retrain(drift_check)
+    retrain_model() >> branch
+    skip_retrain() >> branch
 
 
 monitoring_setup()
